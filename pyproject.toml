@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "adb_puller"
+name = "adbx"
 version = "0.1.0"
 description = "Pull root-protected Android files and folders over ADB with fast checksum verification."
 readme = "README.md"
@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
-adb_puller = "adb_puller.cli:main"
+adbx = "adbx.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["adb_puller*"]
+include = ["adbx*"]

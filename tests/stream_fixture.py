@@ -22,7 +22,7 @@ if __name__ == "__main__":
             digest = "invalid digest" if mode == "hash_bad" else "A" * (32 if mode == "hash_md5" else 8)
         sys.stdout.write(digest + "\n")
         if mode != "hash_unframed":
-            sys.stdout.write("ADB_PULLER_OK\n")
+            sys.stdout.write("ADBX_OK\n")
         raise SystemExit(0)
     if mode == "error":
         sys.stderr.buffer.write(b"fixture error\n")
@@ -41,7 +41,7 @@ if __name__ == "__main__":
             digest = b"0" * 8
         sys.stdout.buffer.write(payload)
         if mode != "archive_no_footer":
-            sys.stdout.buffer.write(b"\n" + digest + b"\nADB_PULLER_ARCHIVE_OK\n")
+            sys.stdout.buffer.write(b"\n" + digest + b"\nADBX_ARCHIVE_OK\n")
         raise SystemExit(1 if mode == "archive_error" else 0)
     if mode in ("range", "gzip_range"):
         start, length = map(int, sys.argv[2:4])

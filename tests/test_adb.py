@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from adb_puller.adb import (
+from adbx.adb import (
     AdbClient, AdbError, DirectoryEntry, FileInfo, _ArchiveReader, _crc32_combine,
     _parse_capabilities, file_digest,
 )
@@ -41,7 +41,7 @@ class TransportTests(unittest.TestCase):
     def test_bad_control_frame(self) -> None:
         """Reject missing success markers and unexpected stdout banners."""
         client = AdbClient()
-        for payload in (b"123\n", b"banner\n123\nADB_PULLER_OK\n", b""):
+        for payload in (b"123\n", b"banner\n123\nADBX_OK\n", b""):
             with self.subTest(payload=payload):
                 with patch.object(client, "_run", return_value=payload):
                     with self.assertRaises(AdbError):
@@ -74,7 +74,7 @@ class TransportTests(unittest.TestCase):
         filename = "空 格 ' $; `id`\n.bin"
         payload = (
             f"d\0.\0f\0./sub/{filename}\0d\0./empty\0"
-            "d\0./sub\0f\0./.hidden\0ADB_PULLER_OK\0"
+            "d\0./sub\0f\0./.hidden\0ADBX_OK\0"
         ).encode()
         with patch.object(client, "_run", return_value=payload):
             self.assertEqual(client.list_directory("/private/source"), [
@@ -85,14 +85,14 @@ class TransportTests(unittest.TestCase):
     def test_invalid_directory_listing(self) -> None:
         """Reject partial listings, escaping paths, links and invalid inventories."""
         payloads = (
-            b"", b"d\0.\0", b"ADB_PULLER_OK\0",
-            b"banner\nd\0.\0ADB_PULLER_OK\0",
-            b"f\0.\0ADB_PULLER_OK\0", b"d\0.\0f\0./bad\xff\0ADB_PULLER_OK\0",
-            b"d\0.\0f\0/absolute\0ADB_PULLER_OK\0",
-            b"d\0.\0f\0./../escape\0ADB_PULLER_OK\0",
-            b"d\0.\0f\0./sub/file\0ADB_PULLER_OK\0",
-            b"d\0.\0f\0./same\0f\0./same\0ADB_PULLER_OK\0",
-            b"d\0.\0x\0./link\0ADB_PULLER_OK\0",
+            b"", b"d\0.\0", b"ADBX_OK\0",
+            b"banner\nd\0.\0ADBX_OK\0",
+            b"f\0.\0ADBX_OK\0", b"d\0.\0f\0./bad\xff\0ADBX_OK\0",
+            b"d\0.\0f\0/absolute\0ADBX_OK\0",
+            b"d\0.\0f\0./../escape\0ADBX_OK\0",
+            b"d\0.\0f\0./sub/file\0ADBX_OK\0",
+            b"d\0.\0f\0./same\0f\0./same\0ADBX_OK\0",
+            b"d\0.\0x\0./link\0ADBX_OK\0",
         )
         client = AdbClient()
         for payload in payloads:
@@ -155,7 +155,7 @@ class TransportTests(unittest.TestCase):
 
         with patch.object(client, "_stat", return_value=FileInfo(1, 1, 1, 1, 1)):
             with patch.object(client, "_root_command", return_value=[sys.executable, fixture, "hang"]):
-                with patch("adb_puller.adb.subprocess.Popen", side_effect=spawn):
+                with patch("adbx.adb.subprocess.Popen", side_effect=spawn):
                     with self.assertRaises(KeyboardInterrupt):
                         with client.inspect_file_later("/private/file") as inspection:
                             self.assertEqual(inspection.info.size, 1)
@@ -191,7 +191,7 @@ class TransportTests(unittest.TestCase):
         try:
             with patch.object(client, "_stat", side_effect=[info, after]):
                 with patch.object(client, "_root_command", side_effect=command):
-                    with patch("adb_puller.adb.subprocess.Popen", side_effect=spawn):
+                    with patch("adbx.adb.subprocess.Popen", side_effect=spawn):
                         with client.inspect_file_later("/private/file") as inspection:
                             if mode == "hang":
                                 self.assertFalse(inspection.done())
@@ -400,7 +400,7 @@ class TransportTests(unittest.TestCase):
         try:
             with patch.object(client, "_transfer_options", return_value=(4, compressed)):
                 with patch.object(client, "_root_command", side_effect=command):
-                    with patch("adb_puller.adb.subprocess.Popen", side_effect=spawn):
+                    with patch("adbx.adb.subprocess.Popen", side_effect=spawn):
                         received, digest = client.stream_file(
                             "/private/file", output, size, callback or (lambda c: None),
                         )
@@ -435,14 +435,14 @@ class TransportTests(unittest.TestCase):
 
     def test_adb_timeout(self) -> None:
         """Translate control-command timeouts to a user-facing ADB error."""
-        with patch("adb_puller.adb.subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 30)):
+        with patch("adbx.adb.subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 30)):
             with self.assertRaises(AdbError):
                 AdbClient().devices()
 
     def test_archive_footer_boundaries(self) -> None:
         """Recognize a footer split across arbitrary byte boundaries."""
         payload = b"binary\0archive\xffdata"
-        frame = payload + b"\n" + f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}".encode() + b"\nADB_PULLER_ARCHIVE_OK\n"
+        frame = payload + b"\n" + f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}".encode() + b"\nADBX_ARCHIVE_OK\n"
         for width in (1, 7, 64, 4096):
             with self.subTest(width=width):
                 chunks = iter([frame[i:i + width] for i in range(0, len(frame), width)] + [None])
@@ -464,7 +464,7 @@ class TransportTests(unittest.TestCase):
 
         try:
             with patch.object(client, "_root_command", return_value=[sys.executable, fixture, mode]):
-                with patch("adb_puller.adb.subprocess.Popen", side_effect=spawn):
+                with patch("adbx.adb.subprocess.Popen", side_effect=spawn):
                     with client.stream_directory("/private/source", callback or (lambda c: None)) as source:
                         return source.read() if read_all else source.read(1)
         finally:

@@ -6,9 +6,9 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from adb_puller.adb import AdbError
-from adb_puller.cli import main
-from adb_puller.transfer import DirectoryPullResult, PullResult
+from adbx.adb import AdbError
+from adbx.cli import main
+from adbx.transfer import DirectoryPullResult, PullResult
 
 
 class CliTests(unittest.TestCase):
@@ -22,8 +22,8 @@ class CliTests(unittest.TestCase):
         ):
             with self.subTest(result=result):
                 output = io.StringIO()
-                with patch("adb_puller.cli.AdbClient") as client:
-                    with patch("adb_puller.cli.pull", return_value=result) as transfer:
+                with patch("adbx.cli.AdbClient") as client:
+                    with patch("adbx.cli.pull", return_value=result) as transfer:
                         with redirect_stdout(output), redirect_stderr(io.StringIO()):
                             code = main(["-s", "serial", "pull", "/private/source", "backup",
                                          "--overwrite", "--jobs", "2", "--compression", "gzip"])
@@ -37,6 +37,6 @@ class CliTests(unittest.TestCase):
         """Translate transfer failures and interruption into documented exit codes."""
         for failure, expected in ((AdbError("test failure"), 1), (KeyboardInterrupt(), 130)):
             with self.subTest(failure=failure):
-                with patch("adb_puller.cli.pull", side_effect=failure):
+                with patch("adbx.cli.pull", side_effect=failure):
                     with redirect_stderr(io.StringIO()):
                         self.assertEqual(main(["pull", "/private/source"]), expected)

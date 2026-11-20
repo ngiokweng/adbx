@@ -13,7 +13,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from adb_puller import AdbClient, AdbError, pull, pull_file
+from adbx import AdbClient, AdbError, pull, pull_file
 
 
 def _digest(algorithm: str, chunks: list[bytes]) -> str:
@@ -31,17 +31,17 @@ def _digest(algorithm: str, chunks: list[bytes]) -> str:
     return hasher.hexdigest()
 
 
-@unittest.skipUnless(os.environ.get("ADB_PULLER_DEVICE_TESTS") == "1", "real-device tests are opt-in")
+@unittest.skipUnless(os.environ.get("ADBX_DEVICE_TESTS") == "1", "real-device tests are opt-in")
 class DeviceTests(unittest.TestCase):
     """Verify real root transfers without reading or changing application data."""
 
     def setUp(self) -> None:
         """Create a unique root-owned remote directory and a local workspace."""
         self.client = AdbClient(os.environ.get("ADB", "adb"), os.environ.get("ANDROID_SERIAL"))
-        self.remote_dir = f"/data/local/tmp/adb_puller-smoke-{uuid.uuid4().hex}"
+        self.remote_dir = f"/data/local/tmp/adbx-smoke-{uuid.uuid4().hex}"
         self.upload = f"{self.remote_dir}.upload"
         self.remote = self.remote_dir + "/binary 空格 ' $; `id`.bin"
-        self.directory = tempfile.TemporaryDirectory(prefix="adb_puller-smoke-")
+        self.directory = tempfile.TemporaryDirectory(prefix="adbx-smoke-")
         self.addCleanup(self.directory.cleanup)
         self.local = Path(self.directory.name)
         self.addCleanup(self._cleanup_remote)
@@ -49,10 +49,10 @@ class DeviceTests(unittest.TestCase):
 
     def _root(self, script: str) -> None:
         result = self.client._run(
-            self.client._root_command(f"set -e; {script}; printf 'ADB_PULLER_TEST_OK\\n'"),
+            self.client._root_command(f"set -e; {script}; printf 'ADBX_TEST_OK\\n'"),
             timeout=30,
         )
-        self.assertEqual(result.strip(), b"ADB_PULLER_TEST_OK")
+        self.assertEqual(result.strip(), b"ADBX_TEST_OK")
 
     def _cleanup_remote(self) -> None:
         self._root(
@@ -93,7 +93,7 @@ class DeviceTests(unittest.TestCase):
 
         def scratch_inside_source(remote):
             return original_script(remote).replace(
-                "/data/local/tmp/adb_puller-stream.", self.remote_dir + "/adb_puller-stream.",
+                "/data/local/tmp/adbx-stream.", self.remote_dir + "/adbx-stream.",
             )
 
         for compression in ("auto", "gzip", "none"):
@@ -142,7 +142,7 @@ class DeviceTests(unittest.TestCase):
 
         def scratch_inside_source(remote):
             return original_script(remote).replace(
-                "/data/local/tmp/adb_puller-stream.", self.remote_dir + "/adb_puller-stream.",
+                "/data/local/tmp/adbx-stream.", self.remote_dir + "/adbx-stream.",
             )
 
         def cancel(copied, total):
@@ -164,7 +164,7 @@ class DeviceTests(unittest.TestCase):
             time.sleep(0.1)
         self.assertEqual(remaining, b"")
 
-    @unittest.skipUnless(os.environ.get("ADB_PULLER_LARGE_TEST") == "1", "4 GiB test is opt-in")
+    @unittest.skipUnless(os.environ.get("ADBX_LARGE_TEST") == "1", "4 GiB test is opt-in")
     def test_over_four_gib(self) -> None:
         """Transfer 4 GiB plus one byte and check the boundary byte and digest."""
         size = 4 * 1024**3 + 1

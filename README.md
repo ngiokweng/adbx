@@ -1,4 +1,4 @@
-# adb_puller
+# adbx
 
 直接把 Android 應用程式私有目錄中的檔案或整個資料夾拉到電腦。手機需要 root，工具透過 `su` 讀取來源，再經 ADB 二進位串流傳送，不需要先搬到 `/sdcard`，也不會移動或刪除來源檔案。
 
@@ -11,28 +11,28 @@
 
 ## 下載執行檔
 
-從此儲存庫的 [Releases](https://github.com/ngiokweng/adb_puller/releases) 頁面下載符合電腦平台的壓縮檔，解壓縮後即可在終端機使用，**不需要安裝 Python**：
+從此儲存庫的 [Releases](https://github.com/ngiokweng/adbx/releases) 頁面下載符合電腦平台的壓縮檔，解壓縮後即可在終端機使用，**不需要安裝 Python**：
 
 | 平台 | Release 附件 | 解壓後的執行檔 |
 | --- | --- | --- |
-| Windows x64 | `adb_puller-windows-x86_64.zip` | `adb_puller.exe` |
-| Linux x64（Ubuntu 22.04 或更新的相容系統） | `adb_puller-linux-x86_64.tar.gz` | `adb_puller` |
-| macOS Intel | `adb_puller-macos-x86_64.tar.gz` | `adb_puller` |
-| macOS Apple Silicon | `adb_puller-macos-arm64.tar.gz` | `adb_puller` |
+| Windows x64 | `adbx-windows-x86_64.zip` | `adbx.exe` |
+| Linux x64（Ubuntu 22.04 或更新的相容系統） | `adbx-linux-x86_64.tar.gz` | `adbx` |
+| macOS Intel | `adbx-macos-x86_64.tar.gz` | `adbx` |
+| macOS Apple Silicon | `adbx-macos-arm64.tar.gz` | `adbx` |
 
 Windows PowerShell：
 
 ```powershell
-.\adb_puller.exe devices
-.\adb_puller.exe pull /data/user/0/com.example.app/files ./backup
-.\adb_puller.exe --adb "C:\Android\platform-tools\adb.exe" devices
+.\adbx.exe devices
+.\adbx.exe pull /data/user/0/com.example.app/files ./backup
+.\adbx.exe --adb "C:\Android\platform-tools\adb.exe" devices
 ```
 
 macOS / Linux：
 
 ```sh
-./adb_puller devices
-./adb_puller pull /data/user/0/com.example.app/files ./backup
+./adbx devices
+./adbx pull /data/user/0/com.example.app/files ./backup
 ```
 
 執行檔已內含 Python，`adb` 仍需另外安裝 [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)，加入 `PATH` 或透過 `--adb` 指定路徑。手機仍需 root 與 USB 偵錯授權。Release 的 `SHA256SUMS` 可用來核對下載的壓縮檔。
@@ -51,30 +51,30 @@ macOS / Linux：
 在專案目錄直接執行：
 
 ```powershell
-python -m adb_puller devices
-python -m adb_puller pull /data/user/0/com.example.app/files/large.bin ./large.bin
+python -m adbx devices
+python -m adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin
 ```
 
 本機路徑省略時儲存至目前目錄；若指定已存在的目錄，則保留來源檔名。含空白的路徑請用引號包住：
 
 ```powershell
-python -m adb_puller pull "/data/user/0/com.example.app/files/my data.bin" "D:\Backups\my data.bin"
+python -m adbx pull "/data/user/0/com.example.app/files/my data.bin" "D:\Backups\my data.bin"
 ```
 
 多台裝置、自訂 adb 路徑，以及覆寫現有檔案：
 
 ```powershell
-python -m adb_puller -s DEVICE_SERIAL pull /data/user/0/com.example.app/files/large.bin ./large.bin
-python -m adb_puller --adb "C:\Android\platform-tools\adb.exe" devices
-python -m adb_puller pull /data/user/0/com.example.app/files/large.bin ./large.bin --overwrite
+python -m adbx -s DEVICE_SERIAL pull /data/user/0/com.example.app/files/large.bin ./large.bin
+python -m adbx --adb "C:\Android\platform-tools\adb.exe" devices
+python -m adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin --overwrite
 ```
 
 也可安裝命令列入口：
 
 ```powershell
 python -m pip install -e .
-adb_puller devices
-adb_puller pull /data/user/0/com.example.app/files/large.bin ./large.bin
+adbx devices
+adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin
 ```
 
 `-s` 與 `--adb` 放在 `pull` / `devices` 子指令之前。工具不會自動強制停止應用程式。
@@ -84,9 +84,9 @@ adb_puller pull /data/user/0/com.example.app/files/large.bin ./large.bin
 `pull` 自動辨識檔案或資料夾，不需要額外的遞迴旗標。資料夾會遞迴包含子目錄、隱藏檔與空目錄。整個目錄透過一條 tar 串流傳輸，預設在手機同步使用 `gzip -1` 壓縮；本機邊接收邊解壓至暫存目錄，並用 CRC-32 或 MD5 核對整條打包串流，成功後才發布內容。檔案數量增加時，不會為每個檔案額外啟動 ADB 或重複掃描來源計算雜湊。校驗選 CRC-32 時，手機上的計算快到不會拖住 `tee` 後面的傳輸。
 
 ```powershell
-python -m adb_puller pull /data/user/0/com.example.app/files
-python -m adb_puller pull /data/user/0/com.example.app/files "D:\Backups"
-python -m adb_puller pull /data/user/0/com.example.app/files "D:\Backups" --overwrite
+python -m adbx pull /data/user/0/com.example.app/files
+python -m adbx pull /data/user/0/com.example.app/files "D:\Backups"
+python -m adbx pull /data/user/0/com.example.app/files "D:\Backups" --overwrite
 ```
 
 省略本機路徑時，建立 `./files/`。若 `D:\Backups` 已存在，目的地為 `D:\Backups\files\`；若指定尚不存在的路徑，該路徑就是目的資料夾。來源結尾的 `/` 不影響此規則。目的資料夾已存在時，預設拒絕下載；`--overwrite` 會在整批驗證成功後合併內容，取代同名檔案並保留本機其他檔案。
@@ -108,9 +108,9 @@ python -m adb_puller pull /data/user/0/com.example.app/files "D:\Backups" --over
 可調整並行數（1–8）或強制開關壓縮：
 
 ```powershell
-python -m adb_puller pull /data/user/0/com.example.app/files/large.log ./large.log --jobs 4 --compression gzip
-python -m adb_puller pull /data/user/0/com.example.app/files/archive.zip ./archive.zip --compression none
-python -m adb_puller pull /data/user/0/com.example.app/files/large.bin ./large.bin --jobs 1 --compression none
+python -m adbx pull /data/user/0/com.example.app/files/large.log ./large.log --jobs 4 --compression gzip
+python -m adbx pull /data/user/0/com.example.app/files/archive.zip ./archive.zip --compression none
+python -m adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin --jobs 1 --compression none
 ```
 
 Log、文字與大量重複內容通常適合壓縮；ZIP、影片等資料通常維持未壓縮。若開頭樣本與其餘內容差異很大，可手動指定模式。實際速度仍取決於 USB 連線、手機 CPU、儲存裝置及其他同時使用 ADB 的程式。已開始的 pull 不會套用新設定，下一次執行才會使用加速路徑。
@@ -180,7 +180,7 @@ git push origin v0.1.0
 ```sh
 gh run list --workflow release.yml
 gh release view v0.1.0
-gh release download v0.1.0 --pattern 'adb_puller-windows-x86_64.zip'
+gh release download v0.1.0 --pattern 'adbx-windows-x86_64.zip'
 ```
 
 在 Actions 頁面手動執行 **Release** workflow，只會測試、打包並保留建置產物，不會發布 Release。
@@ -189,7 +189,7 @@ gh release download v0.1.0 --pattern 'adb_puller-windows-x86_64.zip'
 
 ```sh
 python -m pip install -r requirements-build.txt
-python -m PyInstaller --noconfirm --clean --onefile --python-option "X utf8" --name adb_puller --paths . --specpath build adb_puller/__main__.py
+python -m PyInstaller --noconfirm --clean --onefile --python-option "X utf8" --name adbx --paths . --specpath build adbx/__main__.py
 ```
 
 執行檔位於 `dist/`，對應目前電腦的作業系統與架構；跨平台版本由 GitHub Actions 分別建置。打包時啟用 UTF-8 模式，讓英文 Windows 的終端輸出或重新導向也能處理繁體中文訊息。
@@ -203,7 +203,7 @@ python -m unittest discover -s tests -v
 預設測試不連接手機。若要用已授權的 root 手機測試，以下命令會在 `/data/local/tmp` 建立唯一命名、僅 root 可讀的測試檔，完成後清除：
 
 ```powershell
-$env:ADB_PULLER_DEVICE_TESTS = "1"
+$env:ADBX_DEVICE_TESTS = "1"
 python -m unittest tests.test_device.DeviceTests.test_root_only_binary -v
 python -m unittest tests.test_device.DeviceTests.test_root_only_directory -v
 ```
@@ -211,8 +211,8 @@ python -m unittest tests.test_device.DeviceTests.test_root_only_directory -v
 超過 4 GiB 的實際傳輸測試另須明確開啟。電腦暫存磁碟需要約 4 GiB 可用空間；手機需支援 `truncate` 與稀疏檔案，測試來源只佔少量實體空間。可用 `ANDROID_SERIAL` 選裝置，或用 `ADB` 指定執行檔。
 
 ```powershell
-$env:ADB_PULLER_DEVICE_TESTS = "1"
-$env:ADB_PULLER_LARGE_TEST = "1"
+$env:ADBX_DEVICE_TESTS = "1"
+$env:ADBX_LARGE_TEST = "1"
 python -m unittest tests.test_device.DeviceTests.test_over_four_gib -v
 ```
 

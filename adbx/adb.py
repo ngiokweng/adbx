@@ -21,7 +21,7 @@ import zlib
 _BLOCK_SIZE = 1024 * 1024
 _CHUNK_SIZE = 4 * _BLOCK_SIZE
 _PIPE_SIZE = 1024 * 1024
-_ARCHIVE_MARKER = b"\nADB_PULLER_ARCHIVE_OK\n"
+_ARCHIVE_MARKER = b"\nADBX_ARCHIVE_OK\n"
 _HASH_COMMANDS = {
     "crc32": ("crc32", "toybox crc32", "busybox crc32"),
     "md5": ("md5sum",),
@@ -46,7 +46,7 @@ _PROBE_SCRIPT = (
     "else echo '手機缺少 crc32 與 md5sum，無法校驗傳輸。' >&2; exit 1; fi; "
     "dd_ok=$(command -v dd >/dev/null 2>&1 && printf dd); "
     "gzip_ok=$(command -v gzip >/dev/null 2>&1 && printf gzip); "
-    "printf '%s\\t%s\\t%s\\t%s\\nADB_PULLER_OK\\n' "
+    "printf '%s\\t%s\\t%s\\t%s\\nADBX_OK\\n' "
     '"$hash_alg" "$hash_cmd" "$dd_ok" "$gzip_ok"'
 )
 
@@ -465,7 +465,7 @@ class AdbClient:
             raise AdbError("root 指令回傳無法辨識的內容。") from error
         # The exec service can lose the remote exit status. Require an explicit
         # success marker and an exact response shape before trusting metadata.
-        if len(lines) != 2 or lines[-1] != "ADB_PULLER_OK":
+        if len(lines) != 2 or lines[-1] != "ADBX_OK":
             detail = output[:4096].decode("utf-8", errors="replace").strip()
             raise AdbError(f"無法讀取 root 檔案資訊：{detail or '沒有有效回應'}")
         return lines[0]
@@ -501,7 +501,7 @@ class AdbClient:
         output = self._control(
             'test "$(id -u)" = 0 || { echo "需要 su root 權限" >&2; exit 1; }; '
             f"test -f {quoted} || {{ echo '來源不存在或不是一般檔案' >&2; exit 1; }}; "
-            f"stat -L -c '%s %Y %Z %i %d' -- {quoted} && printf 'ADB_PULLER_OK\\n'"
+            f"stat -L -c '%s %Y %Z %i %d' -- {quoted} && printf 'ADBX_OK\\n'"
         )
         if not re.fullmatch(r"\d+ -?\d+ -?\d+ \d+ \d+", output):
             raise AdbError(f"無法解析遠端 stat 回應：{output!r}")
@@ -521,7 +521,7 @@ class AdbClient:
             f"if test -d {quoted}; then echo directory; "
             f"elif test -f {quoted}; then echo file; "
             "else echo '來源不存在或不是一般檔案／目錄' >&2; exit 1; fi; "
-            "printf 'ADB_PULLER_OK\\n'"
+            "printf 'ADBX_OK\\n'"
         )
         if kind not in ("file", "directory"):
             raise AdbError(f"無法辨識來源類型：{kind!r}")
@@ -547,14 +547,14 @@ class AdbClient:
             'test "$(id -u)" = 0 || { echo "需要 su root 權限" >&2; exit 1; }; '
             f"cd -- {shlex.quote(remote)} && "
             f"find . -exec sh -c {shlex.quote(classify)} sh {{}} + && "
-            "printf 'ADB_PULLER_OK\\000'"
+            "printf 'ADBX_OK\\000'"
         )
         output = self._run(self._root_command(script), timeout=None)
         try:
             fields = output.decode("utf-8").split("\0")
         except UnicodeDecodeError as error:
             raise AdbError("目錄包含無法以 UTF-8 辨識的檔名。") from error
-        if fields[-2:] != ["ADB_PULLER_OK", ""] or len(fields) % 2:
+        if fields[-2:] != ["ADBX_OK", ""] or len(fields) % 2:
             raise AdbError("無法完整讀取 root 目錄清單；請確認連線、root 與 find 指令。")
         entries: dict[str, bool] = {}
         for kind, path in zip(fields[:-2:2], fields[1:-2:2]):
@@ -597,7 +597,7 @@ class AdbClient:
             'echo "手機沒有 gzip；請改用 --compression none。" >&2; exit 1; '
             'else compression=none; fi; fi; '
             f"cd -- {shlex.quote(remote)} || exit 1; "
-            'umask 077; work=$(mktemp -d /data/local/tmp/adb_puller-stream.XXXXXXXXXX) || exit 1; '
+            'umask 077; work=$(mktemp -d /data/local/tmp/adbx-stream.XXXXXXXXXX) || exit 1; '
             'source_root=$(pwd -P); exclude=; '
             'case "$work" in "${source_root%/}/"*) exclude="./${work#"${source_root%/}/"}" ;; esac; '
             'hash_pid=; '
@@ -616,7 +616,7 @@ class AdbClient:
             'test -f "$work/tar.ok" && test -f "$work/filter.ok" || exit 1; '
             'read -r digest rest < "$work/digest" || exit 1; '
             f'while test ${{#digest}} -lt {width}; do digest=0$digest; done; '
-            "printf '\\n%s\\nADB_PULLER_ARCHIVE_OK\\n' \"$digest\""
+            "printf '\\n%s\\nADBX_ARCHIVE_OK\\n' \"$digest\""
         )
 
     @contextmanager
@@ -754,7 +754,7 @@ class AdbClient:
                     script = (
                         f"{prefix}digest=$({source}) || exit 1; "
                         "digest=${digest%% *}; "
-                        "printf '%s\\nADB_PULLER_OK\\n' \"$digest\""
+                        "printf '%s\\nADBX_OK\\n' \"$digest\""
                     )
                     diagnostics = resources.enter_context(tempfile.TemporaryFile())
                     process = _popen_stream(self._root_command(script), diagnostics)

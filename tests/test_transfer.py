@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from adb_puller.adb import AdbError, DirectoryEntry, FileInfo, Snapshot, file_digest
-from adb_puller.transfer import DirectoryPullResult, pull, pull_directory, pull_file
+from adbx.adb import AdbError, DirectoryEntry, FileInfo, Snapshot, file_digest
+from adbx.transfer import DirectoryPullResult, pull, pull_directory, pull_file
 
 
 class FixtureClient:
@@ -228,7 +228,7 @@ class TransferTests(unittest.TestCase):
 
     def test_fsync_failure(self) -> None:
         """Do not publish a file when flushing local storage fails."""
-        with patch("adb_puller.transfer.os.fsync", side_effect=OSError("disk error")):
+        with patch("adbx.transfer.os.fsync", side_effect=OSError("disk error")):
             with self.assertRaises(OSError):
                 pull_file(FixtureClient(self.data), "/private/file", self.target)
         self.assertFalse(self.target.exists())
@@ -247,7 +247,7 @@ class TransferTests(unittest.TestCase):
 
     def test_insufficient_space(self) -> None:
         """Reject insufficient free space before creating temporary output."""
-        with patch("adb_puller.transfer.shutil.disk_usage") as disk_usage:
+        with patch("adbx.transfer.shutil.disk_usage") as disk_usage:
             disk_usage.return_value.free = 0
             with self.assertRaises(AdbError):
                 pull_file(FixtureClient(self.data), "/private/file", self.target)
@@ -345,7 +345,7 @@ class DirectoryTests(unittest.TestCase):
     def test_default_destination(self) -> None:
         """Use the source basename in the current directory when local is omitted."""
         self.entries.clear()
-        with patch("adb_puller.transfer.Path.cwd", return_value=self.root):
+        with patch("adbx.transfer.Path.cwd", return_value=self.root):
             result = pull_directory(self.client, "/private/source/.")
         self.assertEqual(result.destination, self.root / "source")
 
