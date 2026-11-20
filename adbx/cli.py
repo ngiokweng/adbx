@@ -7,6 +7,7 @@ import sys
 import time
 
 from .adb import AdbClient, AdbError, hash_label
+from .push import DirectoryPushResult, push
 from .transfer import DirectoryPullResult, pull
 
 
@@ -59,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     """Parse CLI arguments and return 0 on success, 1 on failure, or 130 on cancel."""
     parser = argparse.ArgumentParser(
         prog="adbx",
-        description="透過 su root 拉取 Android 私有檔案或資料夾；目錄整批打包傳輸並以 CRC-32 或 MD5 驗證。",
+        description="透過 su root 拉取或推送 Android 檔案與資料夾，並以 CRC-32 或 MD5 驗證。",
     )
     parser.add_argument("--adb", default="adb", help="adb 執行檔路徑（預設：PATH 中的 adb）")
     parser.add_argument("-s", "--serial", help="裝置序號；多台裝置時請指定")
@@ -77,6 +78,10 @@ def main(argv: list[str] | None = None) -> int:
         "--compression", choices=("auto", "gzip", "none"), default="auto",
         help="串流壓縮（預設：auto；單檔取樣決定，目錄有 gzip 即壓縮）",
     )
+    push_parser = commands.add_parser("push", help="推送檔案或整個資料夾至任意手機目錄（透過 su root）")
+    push_parser.add_argument("local", help="本機來源檔案或資料夾")
+    push_parser.add_argument("remote", help="手機目的絕對路徑（目錄內保留來源名稱；結尾 / 可建立目錄）")
+    push_parser.add_argument("--overwrite", action="store_true", help="驗證成功後覆寫；目錄則整批驗證後合併內容")
     args = parser.parse_args(argv)
     client = AdbClient(
         args.adb, args.serial,
@@ -87,18 +92,23 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "devices":
             print(client.devices(), end="")
         else:
-            result = pull(
+            transfer = push if args.command == "push" else pull
+            source, destination = ((args.local, args.remote) if args.command == "push"
+                                   else (args.remote, args.local))
+            result = transfer(
                 client,
-                args.remote,
-                args.local,
+                source,
+                destination,
                 overwrite=args.overwrite,
                 progress=progress.update,
                 stage=progress.stage,
             )
-            if isinstance(result, DirectoryPullResult):
+            progress.finish()
+            if isinstance(result, (DirectoryPullResult, DirectoryPushResult)):
+                verified = "目錄內所有檔案" if isinstance(result, DirectoryPushResult) else "目錄打包串流"
                 print(f"完成：{result.destination}\n檔案數：{result.file_count}\n"
                       f"總大小：{result.size} bytes\n"
-                      f"目錄打包串流已通過 {hash_label(result.algorithm)} 驗證。")
+                      f"{verified}已通過 {hash_label(result.algorithm)} 驗證。")
             else:
                 print(f"完成：{result.destination}\n大小：{result.size} bytes\n"
                       f"{hash_label(result.algorithm)}：{result.digest}")

@@ -8,6 +8,22 @@ import zlib
 
 if __name__ == "__main__":
     mode = sys.argv[1]
+    if mode.startswith("upload"):
+        if mode == "upload_stop":
+            sys.stderr.write("storage full\n")
+            raise SystemExit(1)
+        sys.stderr.buffer.write(b"diagnostic\n" * 200000)
+        sys.stderr.buffer.flush()
+        data = sys.stdin.buffer.read()
+        if mode == "upload_error":
+            sys.stderr.write("write failed\n")
+            raise SystemExit(1)
+        if len(sys.argv) > 2 and f"{zlib.crc32(data):08x}" != sys.argv[2]:
+            raise SystemExit(2)
+        sys.stdout.write("uploaded\n")
+        if mode != "upload_unframed":
+            sys.stdout.write("ADBX_OK\n")
+        raise SystemExit(0)
     if mode in ("hash", "hash_md5", "hash_bad", "hash_unframed", "hash_range"):
         if mode == "hash_range":
             start, length = map(int, sys.argv[2:4])

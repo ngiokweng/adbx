@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "adbx"
 version = "0.1.0"
-description = "Pull root-protected Android files and folders over ADB with fast checksum verification."
+description = "Pull and push root-protected Android files and folders over ADB with fast checksum verification."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []

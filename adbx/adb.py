@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import hashlib
 import io
 import os
+import posixpath
 from queue import Empty, Full, Queue
 import re
 import shlex
@@ -15,6 +16,7 @@ import subprocess
 import tempfile
 from threading import Event, Lock
 from typing import BinaryIO, Callable, Iterator
+import uuid
 import zlib
 
 
@@ -510,7 +512,82 @@ class AdbClient:
     @staticmethod
     def _validate_remote(remote: str) -> None:
         if not remote.startswith("/") or "\0" in remote:
-            raise AdbError("手機來源必須是絕對路徑，且不能包含 NUL 字元。")
+            raise AdbError("手機路徑必須是絕對路徑，且不能包含 NUL 字元。")
+
+    def upload_file(
+        self,
+        source: BinaryIO,
+        remote: str,
+        expected_size: int,
+        on_chunk: Callable[[bytes], None],
+    ) -> tuple[int, str]:
+        """Stream source to a remote staging file as root and return size/digest.
+
+        remote must be absolute and its parent must exist. on_chunk receives
+        uncompressed bytes after each write. The caller verifies the remote
+        digest before publishing; cancellation reaps the binary ADB subprocess.
+        """
+        self._validate_remote(remote)
+        hasher = _Hasher(self.hash_algorithm)
+        status_path = posixpath.join(posixpath.dirname(remote), f".adbx-upload-{uuid.uuid4().hex}")
+        status = shlex.quote(status_path)
+        pending_status = shlex.quote(status_path + ".tmp")
+        script = (
+            'test "$(id -u)" = 0 || exit 1; umask 077; '
+            f"if head -c {expected_size} > {shlex.quote(remote)}; then status=uploaded; else status=failed; fi; "
+            f"printf '%s\\n' \"$status\" > {pending_status} && "
+            f"mv -f -- {pending_status} {status}"
+        )
+        # On Windows adb shell's text stdin treats 0x1A as EOF, even with -T.
+        # exec-in switches stdin to binary, but exits before remote completion
+        # and drops stdout. Read the exact length rather than waiting for EOF
+        # (the service closes its socket), then publish an atomic status file.
+        command = self._command("exec-in", f"su -c {shlex.quote(script)}")
+        with tempfile.TemporaryFile() as diagnostics:
+            process = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stderr=diagnostics, bufsize=_CHUNK_SIZE,
+            )
+            assert process.stdin is not None
+            try:
+                try:
+                    while chunk := source.read(_CHUNK_SIZE):
+                        if hasher.length + len(chunk) > expected_size:
+                            raise AdbError("傳輸期間本機來源檔案已變動。")
+                        process.stdin.write(chunk)
+                        hasher.update(chunk)
+                        on_chunk(chunk)
+                    process.stdin.close()
+                except BrokenPipeError as error:
+                    process.wait()
+                    diagnostics.seek(0)
+                    detail = diagnostics.read(65536).decode("utf-8", errors="replace").strip()
+                    raise AdbError(detail or "手機寫入失敗或 ADB 連線已中斷。") from error
+                if process.wait():
+                    diagnostics.seek(0)
+                    detail = diagnostics.read(65536).decode("utf-8", errors="replace").strip()
+                    raise AdbError(detail or "手機寫入失敗或 ADB 連線已中斷。")
+                if hasher.length != expected_size:
+                    raise AdbError("傳輸大小與本機來源不符。")
+                completed = self._control(
+                    f"attempt=0; while ! test -f {status}; do "
+                    'attempt=$((attempt + 1)); test "$attempt" -lt 300 || '
+                    "{ echo '手機未確認上傳完成。' >&2; exit 1; }; sleep 0.1; done; "
+                    f"reply=$(cat -- {status}) && rm -f -- {status} && "
+                    "printf '%s\\nADBX_OK\\n' \"$reply\"",
+                    timeout=35,
+                )
+                if completed != "uploaded":
+                    raise AdbError("手機未確認上傳完成，暫存檔寫入失敗。")
+                return hasher.length, hasher.hexdigest()
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+                try:
+                    process.stdin.close()
+                except OSError:
+                    pass
 
     def path_kind(self, remote: str) -> str:
         """Return 'file' or 'directory' for an absolute remote path using root."""

@@ -1,6 +1,6 @@
 # adbx
 
-直接把 Android 應用程式私有目錄中的檔案或整個資料夾拉到電腦。手機需要 root，工具透過 `su` 讀取來源，再經 ADB 二進位串流傳送，不需要先搬到 `/sdcard`，也不會移動或刪除來源檔案。
+透過 ADB 與 `su` root，在電腦和 Android 之間拉取或推送檔案與整個資料夾，包含應用程式私有目錄。傳輸以 CRC-32 或 MD5 驗證，不會移動或刪除來源檔案。
 
 ## 解決的問題
 
@@ -77,7 +77,30 @@ adbx devices
 adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin
 ```
 
-`-s` 與 `--adb` 放在 `pull` / `devices` 子指令之前。工具不會自動強制停止應用程式。
+`-s` 與 `--adb` 放在 `pull` / `push` / `devices` 子指令之前。工具不會自動強制停止應用程式。
+
+### 推送至手機任意目錄
+
+`push` 自動辨識本機檔案或資料夾，透過 `su` root 寫入指定的手機絕對路徑，並自動建立缺少的父目錄。目標已是目錄時，保留本機來源名稱；目標尚不存在時，該路徑就是目的檔案或資料夾。路徑結尾加 `/` 可指定新建目錄並在其中保留來源名稱。
+
+```powershell
+python -m adbx push ./large.bin /data/user/0/com.example.app/files/
+python -m adbx push ./large.bin /data/local/tmp/new/renamed.bin
+python -m adbx push ./backup /data/local/tmp/
+python -m adbx push --help
+```
+
+預設拒絕已存在的目的檔案或資料夾；`--overwrite` 在驗證後才覆寫同名檔案，資料夾則合併並保留手機內其他檔案：
+
+```powershell
+python -m adbx -s DEVICE_SERIAL push ./backup /data/local/tmp/ --overwrite
+```
+
+資料夾包含隱藏檔、空檔與空目錄；來源符號連結、目錄連接點與特殊檔案，以及目的樹中的符號連結或檔案／目錄類型衝突，會回報錯誤。每個檔案以二進位串流上傳，並核對手機暫存檔的大小與 CRC-32／MD5；整批通過且本機來源未變動後才發布。進度顯示原始位元組數與速度。`push` 目前逐檔、單路傳輸，不提供 `pull` 的 `--jobs` 或 `--compression` 選項。
+
+手機需有 `head`（支援 `-c`）、`mkdir`、`mv`（支援 `-T` 與 `-n`）、`rm` 與 `sleep`。暫存目錄建立在目標的父目錄，需能容納整批來源資料；成功或取消後清除，連線中斷時可能留下 `.adbx-push-*.part`。新目的樹以重新命名發布；合併既有樹時若發布途中發生 I/O 錯誤，可能已更新部分通過驗證的檔案。
+
+推送以 root 身分建立檔案，不保留本機的擁有者或權限，也不自動設定應用程式的擁有者、權限或 SELinux 標籤；手機檔案系統與掛載狀態仍須允許寫入。
 
 ### 拉取整個資料夾
 
