@@ -1,237 +1,141 @@
 # adbx
 
-透過 ADB 與 `su` root，在電腦和 Android 之間拉取或推送檔案與整個資料夾，包含應用程式私有目錄。傳輸以 CRC-32 或 MD5 驗證，不會移動或刪除來源檔案。
+透過 ADB 與 `su` root，在電腦與 Android 之間拉取、推送檔案及整個資料夾，包含應用程式私有目錄。傳輸使用 CRC-32 或 MD5 校驗，驗證成功後才將暫存內容移至目的路徑，並保留來源資料。
 
-## 解決的問題
+## 環境需求
 
-1. 一般 `adb pull` 無法讀取應用程式私有檔案：使用 `adb exec-out` 透過 `su` 讀取，以 `dd` 分段平行傳輸；單路時使用 `cat`。可在傳輸途中使用快速 gzip 壓縮，本機解壓後寫入原始內容。
-2. 大檔案經中轉目錄後不完整：省去中轉步驟；每個資料區塊最多 4 MiB，搭配有上限的佇列控制記憶體用量，支援超過 4 GiB 的大小，核對位元組數與 CRC-32（沒有相容的 `crc32` 時改用 MD5），驗證成功後才發布目的檔案。
+- **電腦**：Windows、macOS 或 Linux。從原始碼執行需要 Python 3.10 以上，無第三方 Python 執行期依賴；獨立執行檔不需另裝 Python。
+- **ADB**：安裝 [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)，開啟 Android 的 USB 偵錯並授權電腦連線。
+- **Root 與校驗工具**：裝置可透過 `su -c` 取得 root，並提供 `stat`、`cat`，以及相容的 `crc32` 或 `md5sum`；也會偵測 `toybox crc32`、`busybox crc32`。首次使用時需允許 ADB shell 的 root 請求。
+- **拉取資料夾**：裝置另需 `find`（支援 `-exec … {} +`）、`tar`、`tee`、`mkfifo` 與 `mktemp`。
+- **推送資料**：裝置另需 `head`（支援 `-c`）、`mkdir`、`mv`（支援 `-T` 與 `-n`）、`rm` 與 `sleep`。
+- **選用加速工具**：`dd` 用於單檔分段傳輸，缺少時改用單路；`gzip` 用於串流壓縮，自動模式在缺少必要工具時不壓縮。
 
-約 4 GiB 截斷的一個可能原因是 FAT32 單檔上限（4 GiB − 1 byte）；空間不足、I/O 錯誤或來源仍在寫入也可能造成問題。不能只依大小判定原因。這個工具避免手機中轉儲存的限制，但**電腦的目的磁碟仍須有足夠空間，並支援該檔案大小**，例如使用 NTFS、exFAT、APFS 或 ext4。
+## 安裝
 
-## 下載執行檔
+### 從原始碼安裝
 
-從此儲存庫的 [Releases](https://github.com/ngiokweng/adbx/releases) 頁面下載符合電腦平台的壓縮檔，解壓縮後即可在終端機使用，**不需要安裝 Python**：
+在專案根目錄執行：
 
-| 平台 | Release 附件 | 解壓後的執行檔 |
+```powershell
+python -m pip install -e .
+```
+
+安裝後可使用 `adbx` 指令。以下操作範例統一使用等效的 `python -m adbx`；在專案根目錄也可直接使用此方式執行。
+
+### 使用獨立執行檔
+
+[Releases](https://github.com/ngiokweng/adbx/releases) 的壓縮檔名稱由[發布工作流程](.github/workflows/release.yml)定義：
+
+| 平台 | 壓縮檔 | 解壓後的執行檔 |
 | --- | --- | --- |
 | Windows x64 | `adbx-windows-x86_64.zip` | `adbx.exe` |
-| Linux x64（Ubuntu 22.04 或更新的相容系統） | `adbx-linux-x86_64.tar.gz` | `adbx` |
+| Linux x64 | `adbx-linux-x86_64.tar.gz` | `adbx` |
 | macOS Intel | `adbx-macos-x86_64.tar.gz` | `adbx` |
 | macOS Apple Silicon | `adbx-macos-arm64.tar.gz` | `adbx` |
 
-Windows PowerShell：
+解壓後，Windows PowerShell 使用 `.\adbx.exe`，macOS／Linux 使用 `./adbx`，取代下方範例中的 `python -m adbx`。執行檔已內含 Python，仍需另外準備 ADB 與已授權的 root 裝置。
+
+Linux 版本在 Ubuntu 22.04 上建置。發布流程另產生 `SHA256SUMS`，供核對下載的壓縮檔。
+
+## 裝置設定
+
+預設使用 `PATH` 中的 `adb`。若不在 `PATH`，以 `--adb` 指定路徑：
 
 ```powershell
-.\adbx.exe devices
-.\adbx.exe pull /data/user/0/com.example.app/files ./backup
-.\adbx.exe --adb "C:\Android\platform-tools\adb.exe" devices
+python -m adbx --adb "C:\Android\platform-tools\adb.exe" devices
 ```
 
-macOS / Linux：
+多台裝置連線時，使用 `-s DEVICE_SERIAL` 選擇序號。`--adb` 與 `-s` 都必須放在 `devices`、`pull`、`push` 子指令之前；手機來源與目的路徑均須為絕對路徑。
 
-```sh
-./adbx devices
-./adbx pull /data/user/0/com.example.app/files ./backup
-```
+## 快速開始
 
-執行檔已內含 Python，`adb` 仍需另外安裝 [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)，加入 `PATH` 或透過 `--adb` 指定路徑。手機仍需 root 與 USB 偵錯授權。Release 的 `SHA256SUMS` 可用來核對下載的壓縮檔。
-
-## 環境
-
-- 從原始碼執行時需要 Python 3.10 以上；無第三方 Python 執行期依賴。Release 執行檔不需要另裝 Python。
-- Android SDK Platform-Tools 的 `adb`，已開啟並授權 USB 偵錯。
-- 手機可透過 `su -c` 取得 root，並具有 `stat`、`cat`，以及 `crc32`（輸出須與 zlib CRC-32 相同）或 `md5sum`。`toybox crc32`、`busybox crc32` 也可以。首次使用時需在手機允許 ADB shell 的 root 請求。
-- 拉取資料夾時，手機另需內建的 `find`（支援 `-exec … {} +`）、`tar`、`tee`、`mkfifo` 與 `mktemp`。
-- 加速功能使用手機內建的 `dd` 與 `gzip`。缺少 `dd` 時自動改為單路；自動模式缺少 `gzip` 時不壓縮，不會在手機建立中轉檔。
-- 支援 Windows、macOS、Linux。macOS/Linux 單檔的預設不覆寫發布方式使用硬連結，目的檔案系統須支援硬連結；exFAT 等檔案系統可使用 `--overwrite`。資料夾整批下載不需要本機硬連結支援。
-
-## 使用
-
-在專案目錄直接執行：
+範例中的 `com.example.app` 與來源檔名須換成裝置上的實際路徑。先列出裝置，再拉取單一檔案：
 
 ```powershell
 python -m adbx devices
 python -m adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin
 ```
 
-本機路徑省略時儲存至目前目錄；若指定已存在的目錄，則保留來源檔名。含空白的路徑請用引號包住：
-
-```powershell
-python -m adbx pull "/data/user/0/com.example.app/files/my data.bin" "D:\Backups\my data.bin"
-```
-
-多台裝置、自訂 adb 路徑，以及覆寫現有檔案：
-
-```powershell
-python -m adbx -s DEVICE_SERIAL pull /data/user/0/com.example.app/files/large.bin ./large.bin
-python -m adbx --adb "C:\Android\platform-tools\adb.exe" devices
-python -m adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin --overwrite
-```
-
-也可安裝命令列入口：
-
-```powershell
-python -m pip install -e .
-adbx devices
-adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin
-```
-
-`-s` 與 `--adb` 放在 `pull` / `push` / `devices` 子指令之前。工具不會自動強制停止應用程式。
-
-### 推送至手機任意目錄
-
-`push` 自動辨識本機檔案或資料夾，透過 `su` root 寫入指定的手機絕對路徑，並自動建立缺少的父目錄。目標已是目錄時，保留本機來源名稱；目標尚不存在時，該路徑就是目的檔案或資料夾。路徑結尾加 `/` 可指定新建目錄並在其中保留來源名稱。
-
-```powershell
-python -m adbx push ./large.bin /data/user/0/com.example.app/files/
-python -m adbx push ./large.bin /data/local/tmp/new/renamed.bin
-python -m adbx push ./backup /data/local/tmp/
-python -m adbx push --help
-```
-
-預設拒絕已存在的目的檔案或資料夾；`--overwrite` 在驗證後才覆寫同名檔案，資料夾則合併並保留手機內其他檔案：
-
-```powershell
-python -m adbx -s DEVICE_SERIAL push ./backup /data/local/tmp/ --overwrite
-```
-
-資料夾包含隱藏檔、空檔與空目錄；來源符號連結、目錄連接點與特殊檔案，以及目的樹中的符號連結或檔案／目錄類型衝突，會回報錯誤。每個檔案以二進位串流上傳，並核對手機暫存檔的大小與 CRC-32／MD5；整批通過且本機來源未變動後才發布。進度顯示原始位元組數與速度。`push` 目前逐檔、單路傳輸，不提供 `pull` 的 `--jobs` 或 `--compression` 選項。
-
-手機需有 `head`（支援 `-c`）、`mkdir`、`mv`（支援 `-T` 與 `-n`）、`rm` 與 `sleep`。暫存目錄建立在目標的父目錄，需能容納整批來源資料；成功或取消後清除，連線中斷時可能留下 `.adbx-push-*.part`。新目的樹以重新命名發布；合併既有樹時若發布途中發生 I/O 錯誤，可能已更新部分通過驗證的檔案。
-
-推送以 root 身分建立檔案，不保留本機的擁有者或權限，也不自動設定應用程式的擁有者、權限或 SELinux 標籤；手機檔案系統與掛載狀態仍須允許寫入。
-
-### 拉取整個資料夾
-
-`pull` 自動辨識檔案或資料夾，不需要額外的遞迴旗標。資料夾會遞迴包含子目錄、隱藏檔與空目錄。整個目錄透過一條 tar 串流傳輸，預設在手機同步使用 `gzip -1` 壓縮；本機邊接收邊解壓至暫存目錄，並用 CRC-32 或 MD5 核對整條打包串流，成功後才發布內容。檔案數量增加時，不會為每個檔案額外啟動 ADB 或重複掃描來源計算雜湊。校驗選 CRC-32 時，手機上的計算快到不會拖住 `tee` 後面的傳輸。
+拉取整個資料夾不需遞迴旗標；省略本機目的路徑時，以下指令會建立 `./files/`：
 
 ```powershell
 python -m adbx pull /data/user/0/com.example.app/files
-python -m adbx pull /data/user/0/com.example.app/files "D:\Backups"
-python -m adbx pull /data/user/0/com.example.app/files "D:\Backups" --overwrite
 ```
 
-省略本機路徑時，建立 `./files/`。若 `D:\Backups` 已存在，目的地為 `D:\Backups\files\`；若指定尚不存在的路徑，該路徑就是目的資料夾。來源結尾的 `/` 不影響此規則。目的資料夾已存在時，預設拒絕下載；`--overwrite` 會在整批驗證成功後合併內容，取代同名檔案並保留本機其他檔案。
+推送時會自動建立缺少的父目錄。以下將剛下載的檔案另存為手機上的 `renamed.bin`：
 
-資料夾的 `--compression auto` 在手機有 gzip 時啟用壓縮，缺少時傳送未壓縮 tar；`--compression gzip` 要求 gzip 可用，`--compression none` 關閉壓縮。`--jobs` 僅用於單檔的分段傳輸，資料夾使用一條連續串流。傳輸進度顯示實際收到的打包串流位元組數與速度，完成後顯示解壓後的總大小與檔案數。
+```powershell
+python -m adbx push ./large.bin /data/local/tmp/new/renamed.bin
+```
 
-手機只在 `/data/local/tmp` 建立少量 FIFO、雜湊與狀態資訊，不儲存完整壓縮檔；結束後清除。本機只需容納解壓後的暫存內容；覆寫既有目錄時，原有資料與暫存內容會同時佔用空間。
+如本機已有 `./backup` 資料夾，可將整個資料夾推送至 `/data/local/tmp/backup/`：
 
-目錄內的符號連結、裝置檔、socket 等特殊檔案會回報錯誤；不跟隨連結。檔名若無法安全對應至本機檔案系統（例如 Windows 的保留名稱或僅大小寫不同的重複檔名），也會在傳輸前回報錯誤。
+```powershell
+python -m adbx push ./backup /data/local/tmp/
+```
 
-傳輸、解壓或整批驗證失敗，以及發布前取消時，會清除整個暫存目錄，保留本機原有檔案。新目的目錄在驗證後整體重新命名；合併既有目錄時仍會依序發布檔案，若發布途中遇到本機 I/O 錯誤，可能已更新部分通過驗證的檔案。
+預設拒絕覆寫目的檔案或資料夾。下列指令會在驗證成功後取代既有檔案；對資料夾使用 `--overwrite` 時，則在整批驗證後合併內容、取代同名檔案並保留其他檔案：
 
-整批 CRC-32 或 MD5 驗證保證收到的打包內容與手機送出的內容一致，並會檢查 tar 內容是否符合最初的目錄清單；不會對每個來源檔案做傳輸前後的雜湊比對。備份持續變動中的應用程式資料前，仍需停止寫入，確保多檔案的一致性。CRC-32 搭配完整位元組數，用來發現傳輸損壞與來源變動；手機本身已是 root，這不是對抗惡意手機的密碼學簽章。
+```powershell
+python -m adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin --overwrite
+```
 
-## 傳輸速度
-
-單檔預設等同於 `--jobs 4 --compression auto`。工具依來源大小使用最多 4 路 ADB 串流，各自讀取不同區段，在本機依偏移位置組合；小檔案會自動減少路數。接收端先把管線的小區塊合併為最多 4 MiB，再解壓與寫檔，減少大量細碎的隨機寫入；佇列與解壓區塊仍有大小上限。自動壓縮會讀取開頭最多 256 KiB 作為樣本，若快速 gzip 預估可節省超過 10% 的資料量，就使用 `gzip -1` 串流壓縮。單檔進度與 MiB/s 以解壓後的原始大小計算。
-
-可調整並行數（1–8）或強制開關壓縮：
+單檔拉取預設為 `--jobs 4 --compression auto`；可依來源內容調整，例如對 log 強制使用 gzip：
 
 ```powershell
 python -m adbx pull /data/user/0/com.example.app/files/large.log ./large.log --jobs 4 --compression gzip
-python -m adbx pull /data/user/0/com.example.app/files/archive.zip ./archive.zip --compression none
-python -m adbx pull /data/user/0/com.example.app/files/large.bin ./large.bin --jobs 1 --compression none
 ```
 
-Log、文字與大量重複內容通常適合壓縮；ZIP、影片等資料通常維持未壓縮。若開頭樣本與其餘內容差異很大，可手動指定模式。實際速度仍取決於 USB 連線、手機 CPU、儲存裝置及其他同時使用 ADB 的程式。已開始的 pull 不會套用新設定，下一次執行才會使用加速路徑。
+完整參數請查閱指令說明：
 
-資料夾整批傳輸在 Windows、Python 3.12、Pixel 6 上，以同一批 25 個小型 log（共 188,800 bytes），使用預設設定比較完整下載時間；兩份結果均逐檔核對測試內容：
-
-| 目錄傳輸方式 | 完整時間 | root ADB 呼叫次數 |
-| --- | ---: | ---: |
-| 舊版逐檔下載與驗證 | 25.89 秒 | 227 |
-| tar/gzip 串流與整批校驗（當時為 SHA-256） | 1.42 秒 | 3 |
-
-這組小檔樣本約快 18.3 倍。三次呼叫分別用於辨識來源、列出目錄與傳輸整批內容，數量不隨檔案數增加；實際加速幅度依檔案大小、壓縮率與裝置而異。
-
-同一台裝置的 1,000 個 log（共 7,552,000 bytes）整批下載為 19.90 秒，同樣只呼叫 root ADB 三次，全部內容均核對一致。
-
-第一輪傳輸加速於 Windows、Pixel 6、USB 2.0 High-Speed 下，以同一份 128 MiB log 樣本進行完整 pull 實測（當時來源雜湊仍在傳輸前完成，另有一筆 pull 同時執行）：
-
-| 設定 | 傳輸階段速度 | 含當時前後 SHA-256、寫檔與驗證的總時間 |
-| --- | ---: | ---: |
-| `--jobs 1 --compression none` | 7.65 MiB/s | 17.98 秒 |
-| `--jobs 4 --compression none` | 17.05 MiB/s | 8.79 秒 |
-| `--jobs 4 --compression auto` | 41.28 MiB/s | 4.24 秒 |
-
-三次結果的校驗值一致（當時為 SHA-256）；這組 log 的傳輸速度約提高 5.4 倍，完整流程約快 4.2 倍。此數值代表可壓縮樣本的解壓後吞吐量，其他檔案的結果會不同。
-
-接收區塊合併與平行來源校驗於 Windows、Pixel 6、USB 2.0 High-Speed 下，以同一份 3.80 GB（3.54 GiB）的 LZ4 檔案進行完整 pull 對照，兩次均使用預設 `--jobs 4 --compression auto`：
-
-| 版本 | 接收、解壓與寫檔 | 來源校驗與磁碟同步 | 完整時間 |
-| --- | ---: | ---: | ---: |
-| 優化前 | 143.03 秒 | 18.20 秒 | 164.64 秒 |
-| 合併接收區塊、平行 CRC-32 | 132.50 秒 | 11.72 秒 | 147.64 秒 |
-
-完整時間縮短約 10.3%，兩次收到的位元組數與 CRC-32 一致。完整時間包含來源資訊查詢；這是同一環境各一次的對照，實際速度仍依手機負載、USB 連線與檔案內容而異。
-
-## 完整性與失敗處理
-
-單檔傳輸流程為（資料夾使用上述整批打包流程）：
-
-1. 取得來源大小、檔案身分與時間，並選用手機上最快且相容的校驗工具，隨即開始傳輸。傳輸期間不再另外讀一次來源，避免雜湊和複製搶同一個儲存裝置。
-2. 串流寫入目的目錄中的隨機 `.part` 暫存檔；多路傳輸依區段偏移寫入，gzip 在本機以有上限的區塊解壓。本機在收到每個區塊時就更新 CRC-32，多路結果可以直接合併，不必把整個檔案再讀一遍。只有手機沒有相容 CRC-32、又使用多路傳輸時，才會在傳完後用 MD5 順序讀取一次暫存檔；這次讀取會和手機上的來源校驗重疊。
-3. 傳輸結束後，手機用同一個快速算法把來源再讀一次。CRC-32 校驗依 `--jobs` 平行讀取不同區段，本機按來源順序合併校驗值，與整份檔案順序計算的結果相同；MD5、缺少 `dd` 或小檔案則保持單路。本機同步磁碟時，這次校驗已經在進行。收到的位元組數、校驗值，以及傳輸前後的檔案身分都必須一致。
-4. 全部一致後，才將暫存檔發布至指定檔名。預設拒絕覆寫；`--overwrite` 也只在驗證成功後取代舊檔。
-
-因此成功路徑只在手機上多讀來源一次，而且用的是 CRC-32 或 MD5，不是傳輸前再加一次 SHA-256。取消或其他失敗會終止並回收仍在執行的校驗子程序。校驗沒有固定逾時。
-
-同一台 Pixel 6 的 4 GiB + 1 byte 稀疏測試檔實測（當時仍用 SHA-256）：初始來源資訊階段由 5.27 秒降至 0.11 秒，首次收到資料由 6.26 秒提前至 1.08 秒，完整流程由 19.29 秒降至 14.36 秒。兩次結果一致；這組數值用來比較雜湊排程，大量零資料的傳輸時間不代表一般 log 或二進位檔案。
-
-傳輸階段會顯示進度與速度。來源若持續變動，請先停止對該檔案的寫入；資料庫與其 WAL 等多檔案的一致性仍需由應用程式的備份機制或停止應用程式保證。
-
-斷線、空間不足、大小或雜湊不符、來源變動、`Ctrl+C` 等可處理的失敗會清除暫存檔並回報錯誤，不發布此次結果。系統斷電或程序被強制終止時，可能留下隨機命名的 `.part` 檔案，可自行刪除。目前不支援續傳。
-
-## 發布 Release
-
-[Release workflow](.github/workflows/release.yml) 會在推送任意新 tag 時，自動於 Windows、Linux、macOS Intel 與 Apple Silicon 上執行測試，再以 PyInstaller 打包。壓縮檔解壓後的執行檔也會在專案目錄之外測試 `--help` 與 `pull --help`，確認可獨立啟動。
-
-先將 workflow 與程式碼提交並推送至 GitHub，再建立指向該提交的 tag：
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
+```powershell
+python -m adbx --help
+python -m adbx pull --help
+python -m adbx push --help
 ```
 
-四個平台全部成功後，workflow 透過 GitHub CLI 建立對應 tag 的 Release、上傳四份壓縮檔與 `SHA256SUMS`，並自動產生版本說明。附件上傳完成後才發布 Release；重跑同一個 tag 的 workflow 會更新同名附件。使用內建的 `GITHUB_TOKEN`，不需要另外設定個人 token。
+## 傳輸方式
 
-可用 GitHub CLI 查看進度與下載附件：
+| 操作 | 傳輸與驗證方式 |
+| --- | --- |
+| 單檔 `pull` | 大檔案可用 1–8 路分段傳輸，小檔案自動減少路數；核對位元組數、CRC-32／MD5 與傳輸前後的來源資訊。 |
+| 資料夾 `pull` | 使用一條 tar 串流，包含子目錄、隱藏檔與空目錄；核對整條打包串流的校驗值及最初的目錄清單。 |
+| 檔案／資料夾 `push` | 逐檔、單路上傳，核對每個手機暫存檔的大小與校驗值，並檢查本機來源是否變動；不提供 `--jobs` 或 `--compression`。 |
 
-```sh
-gh run list --workflow release.yml
-gh release view v0.1.0
-gh release download v0.1.0 --pattern 'adbx-windows-x86_64.zip'
-```
+優先使用通過相容性檢查的 CRC-32，沒有可用工具時改用 MD5。這些校驗用於偵測傳輸損壞，並非密碼學簽章。
 
-在 Actions 頁面手動執行 **Release** workflow，只會測試、打包並保留建置產物，不會發布 Release。
+單檔的自動壓縮會取樣開頭最多 256 KiB，預估可節省超過 10% 時使用 `gzip -1`。資料夾則在裝置有 gzip 時預設壓縮；`--compression none` 可關閉壓縮，`--compression gzip` 要求裝置具有 gzip。`--jobs` 不影響資料夾拉取使用的單條串流。
 
-若要在本機打包，使用 Python 3.12 執行：
+拉取資料夾時，手機僅在 `/data/local/tmp` 建立 FIFO、校驗值與狀態資訊，不儲存完整壓縮檔。推送則在手機目的地的父目錄建立暫存目錄，需容納整批來源資料。
 
-```sh
-python -m pip install -r requirements-build.txt
-python -m PyInstaller --noconfirm --clean --onefile --python-option "X utf8" --name adbx --paths . --specpath build adbx/__main__.py
-```
+## 完整性與限制
 
-執行檔位於 `dist/`，對應目前電腦的作業系統與架構；跨平台版本由 GitHub Actions 分別建置。打包時啟用 UTF-8 模式，讓英文 Windows 的終端輸出或重新導向也能處理繁體中文訊息。
+- **先停止來源寫入**：工具不會自動停止應用程式。資料夾拉取驗證的是打包串流，不會逐檔比較來源傳輸前後的雜湊；資料庫與 WAL 等多檔案的一致性，仍需由應用程式備份機制或停止寫入確保。
+- **磁碟空間與檔案系統**：目的磁碟須有足夠空間，且能容納單一來源檔案。覆寫資料夾時，原有資料與整批暫存內容會同時佔用空間。
+- **macOS／Linux 單檔拉取**：預設的不覆寫發布方式需要本機檔案系統支援硬連結；不支援時可使用 `--overwrite`，但這會允許取代既有目的檔案。資料夾拉取不需要本機硬連結支援。
+- **連結與檔名限制**：資料夾來源中的符號連結與特殊檔案會被拒絕；推送也拒絕本機來源的目錄連接點。拉取資料夾時，無法安全儲存於本機或彼此衝突的檔名會回報錯誤。
+- **整批驗證不等於整批原子替換**：新目的資料夾在驗證後整體重新命名；合併既有資料夾時，若發布途中發生 I/O 錯誤，可能已有部分通過驗證的檔案被更新。
+- **推送後的權限**：檔案以 root 身分建立，不保留本機擁有者或權限，也不自動設定應用程式所需的擁有者、權限與 SELinux 標籤；目的檔案系統與掛載狀態仍須允許寫入。
+
+目前不支援續傳。驗證失敗或發布前取消時會清理暫存內容；斷電、強制終止或手機斷線使清理失敗時，可能留下 `.part` 暫存檔或目錄，推送暫存目錄名稱為 `.adbx-push-*.part`。
 
 ## 測試
+
+預設不連接手機，涵蓋二進位串流、分段傳輸、壓縮損毀、來源變動、校驗失敗、覆寫與取消清理：
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-預設測試不連接手機。若要用已授權的 root 手機測試，以下命令會在 `/data/local/tmp` 建立唯一命名、僅 root 可讀的測試檔，完成後清除：
+實機測試需已授權的 root 裝置，會在 `/data/local/tmp` 建立唯一命名的測試資料並於完成後清除。以下為 PowerShell 的啟用方式，包含拉取與推送測試：
 
 ```powershell
 $env:ADBX_DEVICE_TESTS = "1"
-python -m unittest tests.test_device.DeviceTests.test_root_only_binary -v
-python -m unittest tests.test_device.DeviceTests.test_root_only_directory -v
+python -m unittest discover -s tests -v
 ```
 
-超過 4 GiB 的實際傳輸測試另須明確開啟。電腦暫存磁碟需要約 4 GiB 可用空間；手機需支援 `truncate` 與稀疏檔案，測試來源只佔少量實體空間。可用 `ANDROID_SERIAL` 選裝置，或用 `ADB` 指定執行檔。
+超過 4 GiB 的測試需另外啟用；本機暫存磁碟需約 4 GiB 可用空間，裝置需支援 `truncate` 與稀疏檔案：
 
 ```powershell
 $env:ADBX_DEVICE_TESTS = "1"
@@ -239,6 +143,19 @@ $env:ADBX_LARGE_TEST = "1"
 python -m unittest tests.test_device.DeviceTests.test_over_four_gib -v
 ```
 
-已在 Windows、Python 3.12 與具 root 權限的 Pixel 6 上驗證：root 私有權限目錄內含特殊字元檔名的二進位檔案、目錄的 auto/gzip/none 三種模式、符號連結拒絕處理，以及中途取消後的手機 FIFO 與本機暫存清理。一般測試涵蓋平行區段亂序組合、gzip 截斷與損毀、傳輸後的來源校驗、目錄串流 CRC-32 與完成標記、解壓路徑與硬連結檢查、整批驗證後合併覆寫，以及失敗與取消時的清理。
+實機測試另可透過 `ADB` 指定 ADB 執行檔、`ANDROID_SERIAL` 指定裝置。測試實作位於 [tests/](tests/)。
 
-先前亦已驗證 4,294,967,297 bytes（4 GiB + 1 byte）的完整傳輸，同時核對校驗值與 4 GiB 邊界後的位元組。測試用檔案會在完成後清除。
+## 建置與發布
+
+[Release 工作流程](.github/workflows/release.yml)使用 Python 3.12，在四個目標平台執行不連接手機的測試，再以 PyInstaller 打包，並於專案目錄外測試解壓後執行檔的 `--help`、`pull --help` 與 `push --help`。
+
+本機打包使用 [requirements-build.txt](requirements-build.txt) 中的依賴：
+
+```powershell
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --noconfirm --clean --onefile --python-option "X utf8" --name adbx --paths . --specpath build adbx/__main__.py
+```
+
+產物位於 `dist/`，對應目前電腦的平台與架構。打包時啟用 UTF-8 模式，供繁體中文輸出使用。
+
+推送任意 tag 會觸發四平台建置；全部成功後，工作流程上傳壓縮檔與 `SHA256SUMS`，再發布對應的 GitHub Release。手動執行工作流程只會測試、打包並保留建置產物，不會發布 Release。
